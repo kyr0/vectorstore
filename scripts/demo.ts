@@ -8,12 +8,13 @@ console.log("Model loaded.");
 console.log("Starting demo...");
 await benchmarked(
   async () => {
-    // this text corpus is a collection of documents in different languages, each describing the ocean
-    // they share the meaning, but the words and even the symbols used to describe it are different
-    // however, using vector embeddings, we can compare the documents and find similarities
-    // which allows for cross-lingual search and translation
-    // for an open-source model, this is a major breakthrough
-    // from now on, everyone has access to powerful text search - for free
+    // This text corpus is a collection of documents in different languages, each describing the ocean.
+    // They share the meaning, but the words and even the symbols used to describe it are different.
+    // However, using vector embeddings, we can compare the documents and find similarities,
+    // which allows for cross-lingual search - a search that is made for humans, not machines.
+    // This quality is, for an open-source model, a major breakthrough.
+    // Combined with vector embedding search, everyone has access to local, powerful text search now.
+    // And the best news: It's fast, it's available, it's possible, now, and for free!
     const myDocuments = [
       {
         text: "Exploring the depths of the ocean reveals a world beyond imagination.",
@@ -56,7 +57,7 @@ await benchmarked(
     // running cosine similarity search in vector space
     const searchResults = search(haystack, needle);
 
-    // Displaying search results
+    // displaying search results
     console.log(
       searchResults.map((result) => ({
         score: result.score,
@@ -64,6 +65,19 @@ await benchmarked(
         language: result.doc.metadata.language, // include language in the result for better context
       })),
     );
+
+    /** Prints something like this:
+     * Searching for: Unveiling the mysteries beneath the sea
+      [
+        { score: 0.6855015563968822, id: 1, language: 'English' },
+        { score: 0.5687096727474149, id: 4, language: 'French' },
+        { score: 0.5426440067625005, id: 2, language: 'Spanish' },
+        { score: 0.4697886145316811, id: 3, language: 'Chinese' },
+        { score: 0.34714563173592217, id: 5, language: 'German' }
+      ]
+      benchmarked: elapsed secs 0.292
+      benchmarked: total memory usage was: 1073.42 MiB
+     */
 
     return searchResults;
   },
