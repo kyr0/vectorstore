@@ -17,6 +17,14 @@
 - ✅ First class TypeScript support
 - ✅ Well tested (soon to be... ;-)
 
+
+<h2 align="center">Demo/Setup</h2>
+
+```bash
+npm install
+npm run demo
+```
+
 <h2 align="center">The Science</h2>
 
 If you came here to understand the math behind the scenes,

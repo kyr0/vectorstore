@@ -1,5 +1,13 @@
 import { MemoryUsageTracker } from "./memory-tracker";
 
+if (typeof expect === "undefined") {
+  // @ts-ignore
+  globalThis.expect = () => ({
+    toBeLessThanOrEqual: () => {},
+    toBeLessThan: () => {},
+  });
+}
+
 /** benchmarks speed and mem usage in Node */
 export const benchmarked = <T>(
   f: () => Promise<T>,
