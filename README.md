@@ -1,6 +1,6 @@
 <h1 align="center">vectorstore</h1>
 
-> Pure JavaScript implementation of a vector store with similarity search. Runs locally, in Node/Bun/Deno and soon even in your browser. Supports various embedding models. Open-source and free, no-cost.
+> Pure JavaScript implementation of a vector store with similarity search. Runs locally, in Node/Bun/Deno and soon even in your browser. Supports various embedding models, default to `nomic-embed-text-v1`. Open-source and free, no-cost.
 
 <h2 align="center">Features</h2>
 
