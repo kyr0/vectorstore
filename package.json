@@ -1,6 +1,6 @@
 {
   "name": "vectorstore",
-  "description": "Local, cost-free vector store for text embeddings and similarity search in-browser and Node.js.",
+  "description": "Local, cost-free vector store for text embeddings and similarity search (soon) in-browser and Node.js.",
   "version": "0.0.1",
   "type": "module",
   "publishConfig": {
@@ -24,7 +24,7 @@
     "test": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/test.ts",
     "check": "biome check --apply ./src ./test",
     "clean": "rm -rf ./dist && rm -rf ./coverage",
-    "prebuild": "yarn clean",
+    "prebuild": "npm run clean",
     "build": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/build.ts"
   },
   "author": "Aron Homberg <info@aron-homberg.de>",
