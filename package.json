@@ -1,7 +1,7 @@
 {
   "name": "vectorstore",
   "description": "Local, cost-free vector store for text embeddings and similarity search (soon) in-browser and Node.js.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "publishConfig": {
     "access": "public"

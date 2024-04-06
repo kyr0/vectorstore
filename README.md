@@ -17,6 +17,7 @@
 - ✅ First class TypeScript support
 - ✅ Well tested (soon to be... ;-)
 
+<img src="demo_results.png" align="center" />
 
 <h2 align="center">Demo/Setup</h2>
 
