@@ -1,0 +1,55 @@
+{
+  "name": "vectorstore",
+  "description": "Local, cost-free vector store for text embeddings and similarity search in-browser and Node.js.",
+  "version": "0.0.1",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "keywords": [
+    "vector",
+    "search",
+    "cosine-similarity",
+    "embeddings",
+    "ai",
+    "open-source"
+  ],
+  "repository": {
+    "url": "git+https://github.com/kyr0/vectorstore.git",
+    "type": "git"
+  },
+  "scripts": {
+    "cli": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/cli.ts",
+    "test": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/test.ts",
+    "check": "biome check --apply ./src ./test",
+    "clean": "rm -rf ./dist && rm -rf ./coverage",
+    "prebuild": "yarn clean",
+    "build": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/build.ts"
+  },
+  "author": "Aron Homberg <info@aron-homberg.de>",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "require": "./dist/index.cjs.js",
+      "import": "./dist/index.esm.js"
+    }
+  },
+  "module": "./dist/index.esm.js",
+  "main": "./dist/index.cjs.js",
+  "types": "./dist/index.esm.d.ts",
+  "files": ["dist"],
+  "devDependencies": {
+    "cli-progress": "^3.12.0",
+    "@biomejs/biome": "^1.5.3",
+    "@jsheaven/easybuild": "^1.2.9",
+    "@swc-node/register": "^1.8.0",
+    "@types/node": "^20.11.20",
+    "@vitest/coverage-istanbul": "^1.3.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.3.1"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.16.1"
+  }
+}

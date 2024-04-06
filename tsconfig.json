@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "module": "es2022",
+    "target": "ESNext",
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "types": ["vitest/globals", "node"]
+  },
+  "exclude": ["node_modules"],
+}
