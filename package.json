@@ -20,7 +20,7 @@
     "type": "git"
   },
   "scripts": {
-    "cli": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/cli.ts",
+    "demo": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/demo.ts",
     "test": "node --enable-source-maps --import @swc-node/register/esm-register ./scripts/test.ts",
     "check": "biome check --apply ./src ./test",
     "clean": "rm -rf ./dist && rm -rf ./coverage",

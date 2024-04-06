@@ -72,7 +72,7 @@ export const search = (
 /** creates a document made of text turned into a vector embedding, associated with meta data */
 export const createDocument = async (
   text: string,
-  metaData: MetaData,
+  metaData: MetaData = {},
 ): Promise<Document> => {
   const inference = await getModel();
   const embeddings = await inference([text], {
