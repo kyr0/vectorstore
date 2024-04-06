@@ -11,8 +11,7 @@
 - ✅ Uses the open-source `nomic-embed-text-v1` text embedding model, 8192 token context window
 - ✅ Benchmarked: ~1 GiB memory usage at runtime
 - ✅ Fast! Inference < 0.05 sec. on average (per document)
-- ✅ Available as a simple API and simple to use CLI
-- ✅ Code is just `136 byte` nano sized (ESM, gizpped)
+- ✅ Available as a simple API 
 - ✅ Tree-shakable and side-effect free
 - ✅ Runs on Windows, Mac, Linux, CI tested
 - ✅ First class TypeScript support
