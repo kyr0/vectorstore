@@ -6,7 +6,7 @@
 
 - ✅ Search for text similarities, locally, without API key, free of charge
 - ✅ Best in class performance; better than OpenAI (see "The Science" section)
-- ✅ Download the model automatically, caches it, executes offline afterwards
+- ✅ Downloads the model automatically, caches it, executes offline afterwards
 - ✅ Runs Node.js and (soon) in the browser (large download though ~500 MB)
 - ✅ Uses the open-source `nomic-embed-text-v1` text embedding model, 8192 token context window
 - ✅ Benchmarked: ~1 GiB memory usage at runtime
