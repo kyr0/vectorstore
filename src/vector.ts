@@ -45,7 +45,6 @@ export const magnitude = (tensor: Tensor): number =>
 export const cosineSimilarity = (doc1: Document, doc2: Document): number => {
   checkDimensionality(doc1.embeddings, doc2.embeddings);
 
-  // Proceed with calculation as before
   const mag1 = magnitude(doc1.embeddings);
   const mag2 = magnitude(doc2.embeddings);
   if (mag1 === 0 || mag2 === 0) {
