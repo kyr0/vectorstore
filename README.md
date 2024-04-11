@@ -20,6 +20,8 @@
 <h2 align="center">Roadmap</h2>
 
 - HNSW (Hierarchical Navigable Small World graphs) based vector search with complexity scaling O(log(N))
+  - in best case, based on WebAssembly, using SMID vector instruction set
+- alternativem WebGPU backend to run expensive vector operations (making use of [wasm_webgpu](https://github.com/juj/wasm_webgpu)
 
 <h2 align="center">Initial results</h2>
 
