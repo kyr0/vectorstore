@@ -17,6 +17,12 @@
 - ✅ First class TypeScript support
 - ✅ Well tested (soon to be... ;-)
 
+<h2 align="center">Roadmap</h2>
+
+- HNSW (Hierarchical Navigable Small World graphs) based vector search with complexity scaling O(log(N))
+
+<h2 align="center">Initial results</h2>
+
 <img src="demo_results.png" align="center" />
 
 <h2 align="center">Demo/Setup</h2>
