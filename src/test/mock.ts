@@ -10,6 +10,6 @@ export const createMockDocument = (text: string, dims = 768): Document => {
       data: new Float32Array(dims).fill(0.5), // Simplified mock data
       size: dims,
     } as unknown as Tensor,
-    metadata: { text },
+    metadata: { text: `search_document: ${text}` },
   };
 };

@@ -1,10 +1,12 @@
 import {
   type FeatureExtractionPipeline,
-  pipeline,
   type Tensor,
+  pipeline,
 } from "@xenova/transformers";
+import { HnswlibModule, loadHnswlib, syncFileSystem } from "./lib/hnswlib/hnswlib";
 
 export type MetaData = Record<string, any>;
+export type Implementation = "purejs" | "hnsw-wasm";
 
 export type SearchResult = {
   doc: Document;
@@ -42,7 +44,7 @@ export const magnitude = (tensor: Tensor): number =>
   Math.sqrt(dotProduct(tensor, tensor));
 
 /** computes the cosine similarity between two document tensors */
-export const cosineSimilarity = (doc1: Document, doc2: Document): number => {
+export const cosineSimilarityPureJs = (doc1: Document, doc2: Document): number => {
   checkDimensionality(doc1.embeddings, doc2.embeddings);
 
   const mag1 = magnitude(doc1.embeddings);
@@ -53,28 +55,67 @@ export const cosineSimilarity = (doc1: Document, doc2: Document): number => {
   return dotProduct(doc1.embeddings, doc2.embeddings) / (mag1 * mag2);
 };
 
+
+let hnswlib: HnswlibModule;
+
+export const initHnsw = async () => {
+
+  if (!hnswlib) {
+    hnswlib = await loadHnswlib();
+  }
+  return hnswlib;
+
+}
+
 /** computes the cosine similarity for each document tensor in comparison to the query document tensor */
-export const search = (
+export const search = async(
   docs: Document[],
   queryDoc: Document,
   topP: number = docs.length,
-): SearchResult[] => {
-  return docs
+  impl: Implementation = "purejs",
+): Promise<SearchResult[]> => {
+
+  // most accurate, but slowest, doesn't scale, complexity O(n)
+  if (impl === "purejs") {
+    return docs
     .map((doc) => ({
       doc,
-      score: cosineSimilarity(doc, queryDoc),
+      score: cosineSimilarityPureJs(doc, queryDoc),
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topP);
+  }
+
+  // much faster (SIMD vector instruction set), scales better with large data-sets, complexity O(log(n)), but slightly less accurate
+  if (impl === "hnsw-wasm") {
+    await initHnsw();
+    const filename = 'ghost.dat';
+    hnswlib.EmscriptenFileSystemManager.setDebugLogs(true);
+    const vectorHnswIndex = new hnswlib.HierarchicalNSW('cosine', 768, filename);
+    console.log("vectorHnswIndex", vectorHnswIndex);
+    await syncFileSystem('read');
+    const exists = hnswlib.EmscriptenFileSystemManager.checkFileExists(filename);
+    if (!exists) {
+      vectorHnswIndex.initIndex(100000, 48, 128, 100);
+      vectorHnswIndex.setEfSearch(32);
+      vectorHnswIndex.writeIndex('ghost.dat');
+    } else {
+      vectorHnswIndex.readIndex(filename, 100000);
+      vectorHnswIndex.setEfSearch(32);
+    }
+    // TODO: implement actual search
+    throw new Error("Not implemented yet.");
+  }
 };
 
 /** creates a document made of text turned into a vector embedding, associated with meta data */
 export const createDocument = async (
   text: string,
   metaData: MetaData = {},
+  prefix = "search_document", // https://huggingface.co/nomic-ai/nomic-embed-text-v1#usage
 ): Promise<Document> => {
   const inference = await getModel();
-  const embeddings = await inference([text], {
+  const embeddings = await inference([`${prefix}:${text}`], {
     pooling: "mean",
     normalize: true,
   });
@@ -83,6 +124,14 @@ export const createDocument = async (
     metadata: metaData,
   };
 };
+
+/** creates a document made of text turned into a vector embedding, associated with meta data */
+export const createQueryDocument = async (
+  text: string,
+  metaData: MetaData = {},
+): Promise<Document> => 
+  // https://huggingface.co/nomic-ai/nomic-embed-text-v1#usage  
+  createDocument(text, metaData, "search_query");
 
 let extractor: FeatureExtractionPipeline;
 
