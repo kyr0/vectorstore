@@ -29,8 +29,6 @@ export interface VectorSearchEngine {
     distanceMetric: DistanceMetric;
     metric: MetricFn;
     random: RandomFn;
-    subvectorDimensions: number;
-    centroidsPerSubvector: number;
     seed?: number;
 }
 
@@ -47,31 +45,28 @@ export interface SearchResult {
 export type SearchResults = Array<SearchResult>;
 
 export const MIN_DIMENSIONS = 4;
+export const DEFAULT_SEED = 42;
 
 // --- vector distance metric functions
 
 export const dotProductMetric = singleDotProductWasm;
 
 // --- default engine options
-
-const randomSeed = Math.random();
-
 export const defaultEngineOptions: Partial<VectorSearchEngine> = {
     dimensionality: 128,
     numClusters: 2, // For simplicity, we use 2 clusters for the test case
     normalize: true,
     distanceMetric: 'dot-product',
-    subvectorDimensions: 8,
-    centroidsPerSubvector: 256, // numClusters / 256
-    seed: randomSeed
+    seed: DEFAULT_SEED
 };
 
-export const updateCentroidsKMeansPlusPlus = function (k: number, engine: VectorSearchEngine): void {
+export const updateIndex = (engine: VectorSearchEngine, k?: number): void => {
     const vectors: Vectors = Array.from(engine.index.values()) as Vectors;
+    k = typeof k === 'number' ? k : engine.numClusters;
     if (vectors.length < k) {
         throw new Error('Not enough vectors to initialize the requested number of centroids.');
     }
-    engine.centroids = initializeCentroidsKMeansPlusPlus(vectors, k, engine.metric, engine.seed);
+    engine.centroids = initializeCentroidsWithVectors(vectors, k, engine.metric, engine.seed);
 
     // Assign vectors to clusters based on the nearest centroid
     for (const cluster of engine.clusters) {
@@ -92,12 +87,12 @@ export const updateCentroidsKMeansPlusPlus = function (k: number, engine: Vector
     }
 };
 
-export const selectMetricFunction = function (engine: VectorSearchEngine): MetricFn {
-    switch (engine.distanceMetric) {
+export const selectMetricFunction =  (distanceMetric: DistanceMetric): MetricFn => {
+    switch (distanceMetric) {
         case 'dot-product':
             return dotProductMetric;
         default:
-            throw new Error(`Unknown distance metric: ${engine.distanceMetric}`);
+            throw new Error(`Unknown distance metric: ${distanceMetric}`);
     }
 };
 
@@ -122,7 +117,7 @@ export const createEngine = (options: Partial<VectorSearchEngine> = defaultEngin
         seed,
     } as VectorSearchEngine;
 
-    const selectedMetricFn = selectMetricFunction(engine);
+    const selectedMetricFn = selectMetricFunction(engine.distanceMetric);
 
     engine.metric = typeof options.metric === "function" ?
         options.metric :
@@ -139,7 +134,6 @@ export const createEngine = (options: Partial<VectorSearchEngine> = defaultEngin
             vectors: new Map<string, Vector>(),
         });
     }
-
     return engine;
 };
 
@@ -148,7 +142,7 @@ export const createEngine = (options: Partial<VectorSearchEngine> = defaultEngin
  * @param vector - The vector to normalize.
  * @returns The normalized vector.
  */
-export function normalizeVector(vector: Vector): Vector {
+export const normalizeVector = (vector: Vector): Vector => {
     const length = Math.sqrt(singleDotProductWasm(vector, vector));
     if (length === 0) return vector;
     const normalizedVector = new Float32Array(vector.length);
@@ -166,10 +160,10 @@ export function normalizeVector(vector: Vector): Vector {
  * @param seed - Seed for random number generation.
  * @returns An array of centroids.
  */
-export function initializeCentroidsKMeansPlusPlus(vectors: Vectors, k: number, metric: MetricFn, seed?: number): Vector[] {
+export const initializeCentroidsWithVectors = (vectors: Vectors, k: number, metric: MetricFn, seed?: number): Vectors => {
     const centroids: Vector[] = [];
     const distances: Float64Array = new Float64Array(vectors.length).fill(Infinity);
-    const random = getSeededRandomFn(seed || Math.random());
+    const random = getSeededRandomFn(seed || DEFAULT_SEED);
 
     // Choose the first centroid randomly
     centroids.push(vectors[Math.floor(random() * vectors.length)]);
@@ -204,7 +198,7 @@ export function initializeCentroidsKMeansPlusPlus(vectors: Vectors, k: number, m
  * @param cluster - The cluster to update.
  * @param vector - The new vector added to the cluster.
  */
-export function updateCentroidIncrementally(cluster: Cluster, vector: Vector): void {
+export const updateCentroidIncrementally = (cluster: Cluster, vector: Vector): void => {
     const newCentroid = new Float32Array(cluster.centroid.length);
     const numVectors = cluster.vectors.size;
 
@@ -220,7 +214,7 @@ export function updateCentroidIncrementally(cluster: Cluster, vector: Vector): v
  * @param vector - The vector to be assigned.
  * @param engine - The vector search engine instance.
  */
-export function assignToCluster(key: string, vector: Vector, engine: VectorSearchEngine): void {
+export const assignToCluster = (key: string, vector: Vector, engine: VectorSearchEngine): void => {
     let bestIndex = 0;
     let bestDistance = -engine.metric(vector, engine.clusters[0].centroid);
 
@@ -244,7 +238,7 @@ export function assignToCluster(key: string, vector: Vector, engine: VectorSearc
  * @param vector - The vector to be added.
  * @param engine - The vector search engine instance.
  */
-export function addVector(key: string, vector: Vector, engine: VectorSearchEngine): void {
+export const addVector = (key: string, vector: Vector, engine: VectorSearchEngine): void => {
     if (vector.length !== engine.dimensionality) {
         throw new Error(`Vector must be of dimensionality ${engine.dimensionality}`);
     }
@@ -259,12 +253,30 @@ export function addVector(key: string, vector: Vector, engine: VectorSearchEngin
     assignToCluster(key, vector, engine);
 }
 
+
+/**
+ * Incrementally update the centroid of a cluster when a vector is removed.
+ * @param cluster - The cluster to update.
+ * @param vector - The vector being removed from the cluster.
+ */
+export const removeVectorFromCluster = (cluster: Cluster, vector: Vector): void => {
+    const newCentroid = new Float32Array(cluster.centroid.length);
+    const numVectors = cluster.vectors.size;
+
+    if (numVectors === 0) return;
+
+    for (let i = 0; i < newCentroid.length; i++) {
+        newCentroid[i] = (cluster.centroid[i] * (numVectors + 1) - vector[i]) / numVectors;
+    }
+    cluster.centroid.set(newCentroid);
+}
+
 /**
  * Remove a vector from the engine index
  * @param key - Unique identifier for the vector.
  * @param engine - The vector search engine instance.
  */
-export function removeVector(key: string, engine: VectorSearchEngine): void {
+export const removeVector = (key: string, engine: VectorSearchEngine): void => {
     if (engine.index.has(key)) {
         const vector = engine.index.get(key);
         engine.index.delete(key);
@@ -273,13 +285,13 @@ export function removeVector(key: string, engine: VectorSearchEngine): void {
         for (const cluster of engine.clusters) {
             if (cluster.vectors.has(key)) {
                 cluster.vectors.delete(key);
+                removeVectorFromCluster(cluster, vector);
                 break;
             }
         }
-
-        // Optionally, update the centroid here or defer until necessary
     }
 }
+
 
 /**
  * Search for the most similar vectors in the engine index
@@ -288,7 +300,7 @@ export function removeVector(key: string, engine: VectorSearchEngine): void {
  * @param engine - The vector search engine instance.
  * @returns The top K most similar vectors.
  */
-export function search(vector: Vector, topK: number, engine: VectorSearchEngine): SearchResults {
+export const search = (vector: Vector, topK: number, engine: VectorSearchEngine): SearchResults => {
     if (vector.length !== engine.dimensionality) {
         throw new Error(`Query vector must be of dimension ${engine.dimensionality}`);
     }
@@ -319,7 +331,7 @@ export function search(vector: Vector, topK: number, engine: VectorSearchEngine)
  * @param engine - The vector search engine instance.
  * @returns The top K most similar vectors.
  */
-export function searchWithProximity(vector: Vector, topK: number, engine: VectorSearchEngine): SearchResults {
+export const searchWithProximity = (vector: Vector, topK: number, engine: VectorSearchEngine): SearchResults => {
     if (vector.length !== engine.dimensionality) {
         throw new Error(`Query vector must be of dimension ${engine.dimensionality}`);
     }
@@ -356,3 +368,97 @@ export function searchWithProximity(vector: Vector, topK: number, engine: Vector
     }
     return results.slice(0, topK);
 }
+
+const arrayToBuffer = (arr: Float32Array): ArrayBuffer => arr.buffer.slice(0);
+const bufferToArray = (buffer: ArrayBuffer): Float32Array => new Float32Array(buffer)
+
+export interface SerializedVectorSearchEngine {
+    clusters: Array<{
+        centroid: ArrayBuffer;
+        vectors: { [key: string]: ArrayBuffer };
+    }>;
+    dimensionality: number;
+    numClusters: number;
+    index: { [key: string]: ArrayBuffer };
+    centroids: Array<ArrayBuffer>;
+    normalize: number; // 0 for false, 1 for true
+    distanceMetric: DistanceMetric;
+    seed?: number;
+}
+
+export const toSerialization = (engine: VectorSearchEngine): SerializedVectorSearchEngine => {
+    const serializeCluster = (cluster: Cluster) => {
+        const vectors: { [key: string]: ArrayBuffer } = {};
+        cluster.vectors.forEach((value, key) => {
+            vectors[key] = arrayToBuffer(value);
+        });
+        return {
+            centroid: arrayToBuffer(cluster.centroid),
+            vectors
+        };
+    };
+
+    const clusters = engine.clusters.map(serializeCluster);
+    const index: { [key: string]: ArrayBuffer } = {};
+    engine.index.forEach((value, key) => {
+        index[key] = arrayToBuffer(value);
+    });
+    const centroids = engine.centroids.map(arrayToBuffer);
+
+    return {
+        clusters,
+        dimensionality: engine.dimensionality,
+        numClusters: engine.numClusters,
+        index,
+        centroids,
+        normalize: engine.normalize ? 1 : 0,
+        distanceMetric: engine.distanceMetric,
+        seed: engine.seed
+    };
+};
+
+export const createFromSerialization = async (data: SerializedVectorSearchEngine): Promise<VectorSearchEngine> => {
+    const deserializeCluster = async (data: any): Promise<Cluster> => {
+        const centroid = bufferToArray(data.centroid);
+        const vectors = new Map<string, Vector>();
+        for (const key in data.vectors) {
+            vectors.set(key, bufferToArray(data.vectors[key]));
+        }
+        return { centroid, vectors };
+    };
+
+    const clusters = await Promise.all(data.clusters.map(deserializeCluster));
+    const index = new Map<string, Vector>();
+    for (const key in data.index) {
+        index.set(key, bufferToArray(data.index[key]));
+    }
+    const centroids = await Promise.all(data.centroids.map(bufferToArray));
+
+    const metric = selectMetricFunction(data.distanceMetric);
+
+    return {
+        clusters,
+        dimensionality: data.dimensionality,
+        numClusters: data.numClusters,
+        index,
+        centroids,
+        normalize: data.normalize === 1,
+        distanceMetric: data.distanceMetric,
+        metric,
+        random: getSeededRandomFn(data.seed || 0),
+        seed: data.seed
+    };
+};
+export const serializeToString = (serializedEngine: SerializedVectorSearchEngine): string => 
+    JSON.stringify(serializedEngine, (key, value) =>
+        value instanceof ArrayBuffer
+            ? Array.from(new Uint8Array(value))
+            : value
+    );
+
+export const serializedFromString = (encodedEngine: string): SerializedVectorSearchEngine =>
+    JSON.parse(encodedEngine, (key, value) =>
+        Array.isArray(value) && value.length > 0 && typeof value[0] === 'number'
+            ? new Uint8Array(value).buffer
+            : value
+    );
