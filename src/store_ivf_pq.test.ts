@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, dotProductMetric, getSeededRandomFn, searchWithProximity, MetricFn, Means, VectorSearchEngine, toSerialization, createFromSerialization, serializeToString, serializedFromString } from './store_ivf_pq';
+import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, getSeededRandomFn, searchWithProximity, MetricFn, VectorSearchEngine, toSerialization, createFromSerialization, serializeToString, serializedFromString } from './store_ivf_pq';
 import { MemoryUsageTracker } from './test/memory-tracker';
+import { singleDotProductWasm } from 'fast-dotproduct';
+
+export interface Means {
+    centroids: Vectors;
+    assignments: Uint32Array;
+}
 
 /**
  * Initialize centroids randomly from the input vectors.
@@ -9,7 +15,7 @@ import { MemoryUsageTracker } from './test/memory-tracker';
  * @param seed - Seed for random number generation.
  * @returns An array of centroids.
  */
-export function initializeCentroidsRandomly(vectors: Vectors, k: number, seed?: number): Vector[] {
+export function initializeCentroidsRandomly(vectors: Vectors, k: number, seed?: number): Vectors {
     const centroids = [];
     const seen = new Set<number>();
     const random = getSeededRandomFn(seed || Math.random());
@@ -240,7 +246,7 @@ describe('Vector Search Engine', () => {
     it('should normalize vectors correctly', () => {
         const vector: Vector = new Float32Array([1, 2, 3, 4]);
         const normalized = normalizeVector(vector);
-        const length = Math.sqrt(dotProductMetric(normalized, normalized));
+        const length = Math.sqrt(singleDotProductWasm(normalized, normalized));
 
         expect(length).toBeCloseTo(1);
     });
