@@ -14,8 +14,7 @@ export interface Cluster {
 }
 
 export type DistanceMetric = 'dot-product';
-
-export type MetricFn = (a: Vector, b: Vector) => number;
+export type DistanceMetricFn = (a: Vector, b: Vector) => number;
 export type RandomFn = () => number;
 
 export interface VectorSearchEngine {
@@ -23,6 +22,8 @@ export interface VectorSearchEngine {
     dimensionality: number;
     // number of clusters (k-means), elbowed if not provided
     numClusters: number;
+    // wether to auto-optimize the number of clusters using the elbow method (2x memory consumption, same speed, improved accuracy)
+    autoOptimizeClusters: boolean;
     // list of clusters
     clusters: Array<Cluster>;
     // actual vector backing store
@@ -34,9 +35,9 @@ export interface VectorSearchEngine {
     // distance metric function (dot product by default)
     distanceMetric: DistanceMetric;
     // distance metric function reference, referenced for performance
-    metric: MetricFn;
+    getDistance: DistanceMetricFn;
     // seeded random number generator function, referenced for performance
-    random: RandomFn;
+    getRandom: RandomFn;
     // seed for random number generator, defaults to 42
     seed: number;
 }
@@ -46,6 +47,7 @@ export interface SerializedVectorSearchEngine {
         centroid: ArrayBuffer;
         vectors: { [key: string]: ArrayBuffer };
     }>;
+    autoOptimizeClusters: number;
     dimensionality: number;
     numClusters: number;
     index: { [key: string]: ArrayBuffer };
@@ -78,13 +80,14 @@ export const DEFAULT_ENGINE_OPTIONS: Partial<VectorSearchEngine> = {
     dimensionality: MIN_DIMENSIONS,
     numClusters: DEFAULT_NUM_CLUSTERS,
     normalize: true,
+    autoOptimizeClusters: false,
     distanceMetric: DEFAULT_DISTANCE_METRIC,
     seed: DEFAULT_SEED
 };
 
 // === Distance Metric Selection ===
 
-export const selectMetricFunction =  (distanceMetric: DistanceMetric): MetricFn => {
+export const getDistanceMetricFunction =  (distanceMetric: DistanceMetric): DistanceMetricFn => {
     switch (distanceMetric) {
         case 'dot-product':
             return singleDotProductWasm;
@@ -106,6 +109,7 @@ export const createEngine = (options: Partial<VectorSearchEngine> = DEFAULT_ENGI
     const dimensionality = options.dimensionality ?? DEFAULT_ENGINE_OPTIONS.dimensionality;
     const numClusters = options.numClusters ?? DEFAULT_ENGINE_OPTIONS.numClusters;
     const seed = options.seed ?? DEFAULT_ENGINE_OPTIONS.seed;
+    const autoOptimizeClusters = options.autoOptimizeClusters ?? DEFAULT_ENGINE_OPTIONS.autoOptimizeClusters;
 
     if (dimensionality < MIN_DIMENSIONS) {
         throw new Error(`dimension must be at least ${MIN_DIMENSIONS}`);
@@ -120,17 +124,18 @@ export const createEngine = (options: Partial<VectorSearchEngine> = DEFAULT_ENGI
         dimensionality,
         numClusters,
         seed,
+        autoOptimizeClusters,
     } as VectorSearchEngine;
 
-    const selectedMetricFn = selectMetricFunction(engine.distanceMetric);
+    const distanceMetricFnCandidate = getDistanceMetricFunction(engine.distanceMetric);
 
-    engine.metric = typeof options.metric === "function" ?
-        options.metric :
-        typeof selectedMetricFn === "function" ?
-            selectedMetricFn :
+    engine.getDistance = typeof options.getDistance === "function" ?
+        options.getDistance :
+        typeof distanceMetricFnCandidate === "function" ?
+            distanceMetricFnCandidate :
             singleDotProductWasm; // Default to dot product
 
-    engine.random = typeof options.random === "function" ? engine.random : getSeededRandomFn(seed);
+    engine.getRandom = typeof options.getRandom === "function" ? engine.getRandom : getSeededRandomFn(seed);
 
     // Initialize clusters with empty centroids
     for (let i = 0; i < numClusters; i++) {
@@ -148,6 +153,7 @@ export const createEngine = (options: Partial<VectorSearchEngine> = DEFAULT_ENGI
  * @returns The normalized vector.
  */
 export const normalizeVector = (vector: Vector): Vector => {
+    // TODO: needs to be generalized for other norms, e.g. L1, L2, etc., should be seletable by user
     const length = Math.sqrt(singleDotProductWasm(vector, vector));
     if (length === 0) return vector;
     const normalizedVector = new Float32Array(vector.length);
@@ -163,13 +169,13 @@ export const normalizeVector = (vector: Vector): Vector => {
  * Initialize centroids using k-means++ algorithm.
  * @param vectors - The list of vectors to choose from.
  * @param k - The number of centroids to initialize.
- * @param metric - The metric function to use for distance calculation.
+ * @param getDistance - The distance metric function to use for distance calculation.
  * @param seed - Seed for random number generation.
  * @returns An array of centroids.
  */
-export const initializeCentroidsWithVectors = (vectors: Vectors, k: number, metric: MetricFn, seed?: number): Vectors => {
+export const initializeCentroidsWithVectors = (vectors: Vectors, k: number, getDistance: DistanceMetricFn, seed?: number): Vectors => {
     const centroids: Vectors = [];
-    const distances: Float64Array = new Float64Array(vectors.length).fill(Infinity);
+    const distances: Float32Array = new Float32Array(vectors.length).fill(Infinity);
     const random = getSeededRandomFn(seed || DEFAULT_SEED);
 
     // choose the first centroid randomly
@@ -180,7 +186,7 @@ export const initializeCentroidsWithVectors = (vectors: Vectors, k: number, metr
 
         // update distances with the nearest centroid
         for (let i = 0; i < vectors.length; i++) {
-            const distance = Math.min(distances[i], -metric(vectors[i], centroids[centroids.length - 1]));
+            const distance = Math.min(distances[i], -getDistance(vectors[i], centroids[centroids.length - 1]));
             distances[i] = distance;
             totalDistance += distance;
         }
@@ -223,10 +229,10 @@ export const updateCentroidIncrementally = (cluster: Cluster, vector: Vector): v
  */
 export const assignToCluster = (key: string, vector: Vector, engine: VectorSearchEngine): void => {
     let bestIndex = 0;
-    let bestDistance = -engine.metric(vector, engine.clusters[0].centroid);
+    let bestDistance = -engine.getDistance(vector, engine.clusters[0].centroid);
 
     for (let i = 1; i < engine.numClusters; i++) {
-        const distance = -engine.metric(vector, engine.clusters[i].centroid);
+        const distance = -engine.getDistance(vector, engine.clusters[i].centroid);
         if (distance < bestDistance) {
             bestIndex = i;
             bestDistance = distance;
@@ -308,7 +314,7 @@ export const calculateInertia = (engine: VectorSearchEngine): number => {
     let inertia = 0;
     for (const cluster of engine.clusters) {
         for (const vector of cluster.vectors.values()) {
-            inertia += -engine.metric(vector, cluster.centroid);
+            inertia += -engine.getDistance(vector, cluster.centroid);
         }
     }
     return inertia;
@@ -317,7 +323,7 @@ export const calculateInertia = (engine: VectorSearchEngine): number => {
 export const findBestNumClusters = (vectors: Vectors, maxClusters: number, engine: VectorSearchEngine): number => {
     const inertias: Array<number> = [];
     for (let k = 1; k <= maxClusters; k++) {
-        const testEngine = createEngine({ numClusters: k, metric: engine.metric, seed: engine.seed, dimensionality: engine.dimensionality });
+        const testEngine = createEngine({ numClusters: k, getDistance: engine.getDistance, seed: engine.seed, dimensionality: engine.dimensionality });
         vectors.forEach((vector, index) => addVector(index.toString(), vector, testEngine));
         inertias.push(calculateInertia(testEngine));
     }
@@ -329,7 +335,6 @@ export const findBestNumClusters = (vectors: Vectors, maxClusters: number, engin
             break;
         }
     }
-
     return bestNumClusters;
 }
 
@@ -337,15 +342,15 @@ export const findBestNumClusters = (vectors: Vectors, maxClusters: number, engin
 export const updateIndex = (engine: VectorSearchEngine): void => {
     const vectors: Vectors = Array.from(engine.index.values()) as Vectors;
 
-   // Determine the best number of clusters if k is not provided
-   const k = findBestNumClusters(vectors, 10, engine);
+   // Determine the best number of clusters if k is not provided, if autoOptimizeClusters is enabled
+   const k = engine.autoOptimizeClusters ? findBestNumClusters(vectors, 10, engine) : engine.numClusters;
 
    // enough vectors to update the number of clusters
    if (vectors.length >= k) {
         // update the number of clusters
         engine.numClusters = k;
    }
-    engine.centroids = initializeCentroidsWithVectors(vectors, k, engine.metric, engine.seed);
+    engine.centroids = initializeCentroidsWithVectors(vectors, k, engine.getDistance, engine.seed);
 
     for (const cluster of engine.clusters) {
         cluster.vectors.clear();
@@ -353,9 +358,9 @@ export const updateIndex = (engine: VectorSearchEngine): void => {
 
     for (const [key, vector] of engine.index.entries()) {
         let bestIndex = 0;
-        let bestDistance = -engine.metric(vector, engine.centroids[0]);
+        let bestDistance = -engine.getDistance(vector, engine.centroids[0]);
         for (let i = 1; i < k; i++) {
-            const distance = -engine.metric(vector, engine.centroids[i]);
+            const distance = -engine.getDistance(vector, engine.centroids[i]);
             if (distance < bestDistance) {
                 bestIndex = i;
                 bestDistance = distance;
@@ -385,7 +390,7 @@ export const search = (vector: Vector, topK: number, engine: VectorSearchEngine)
 
     for (let i = 0; i < entries.length; i++) {
         const [key, indexedValue] = entries[i];
-        const similarity = engine.metric(queryVector, indexedValue);
+        const similarity = engine.getDistance(queryVector, indexedValue);
 
         if (results.length < topK) {
             results.push({ key, similarity });
@@ -416,7 +421,7 @@ export const searchWithProximity = (vector: Vector, topK: number, engine: Vector
     // find the closest centroids
     const centroidSimilarities = engine.centroids.map((centroid, index) => ({
         index,
-        similarity: engine.metric(queryVector, centroid)
+        similarity: engine.getDistance(queryVector, centroid)
     }));
 
     // sort centroids by similarity in descending order
@@ -428,9 +433,9 @@ export const searchWithProximity = (vector: Vector, topK: number, engine: Vector
     // search vectors in the clusters of the closest centroids
     for (const clusterIndex of topCentroidIndices) {
         const cluster = engine.clusters[clusterIndex];
-
+ 
         cluster.vectors.forEach((indexedValue, key) => {
-            const similarity = engine.metric(queryVector, indexedValue);
+            const similarity = engine.getDistance(queryVector, indexedValue);
             if (results.length < topK) {
                 results.push({ key, similarity });
                 results.sort((a, b) => b.similarity - a.similarity);
@@ -474,6 +479,7 @@ export const toSerialization = (engine: VectorSearchEngine): SerializedVectorSea
         index,
         centroids,
         normalize: engine.normalize ? 1 : 0,
+        autoOptimizeClusters: engine.autoOptimizeClusters ? 1 : 0,
         distanceMetric: engine.distanceMetric,
         seed: engine.seed
     };
@@ -489,25 +495,22 @@ export const createFromSerialization = async (data: SerializedVectorSearchEngine
         return { centroid, vectors };
     };
 
-    const clusters = await Promise.all(data.clusters.map(deserializeCluster));
     const index = new Map<string, Vector>();
     for (const key in data.index) {
         index.set(key, bufferToArray(data.index[key]));
     }
-    const centroids = await Promise.all(data.centroids.map(bufferToArray));
-
-    const metric = selectMetricFunction(data.distanceMetric);
 
     return {
-        clusters,
+        index,
+        clusters: await Promise.all(data.clusters.map(deserializeCluster)),
         dimensionality: data.dimensionality,
         numClusters: data.numClusters,
-        index,
-        centroids,
+        centroids: await Promise.all(data.centroids.map(bufferToArray)),
         normalize: data.normalize === 1,
+        autoOptimizeClusters: data.autoOptimizeClusters === 1,
         distanceMetric: data.distanceMetric,
-        metric,
-        random: getSeededRandomFn(data.seed || 0),
+        getDistance: getDistanceMetricFunction(data.distanceMetric),
+        getRandom: getSeededRandomFn(data.seed || 0),
         seed: data.seed
     };
 };

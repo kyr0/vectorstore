@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, getSeededRandomFn, searchWithProximity, MetricFn, VectorSearchEngine, toSerialization, createFromSerialization, serializeToString, serializedFromString } from './store_ivf_pq';
+import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, getSeededRandomFn, searchWithProximity, DistanceMetricFn, VectorSearchEngine, toSerialization, createFromSerialization, serializeToString, serializedFromString } from './store_ivf_pq';
 import { MemoryUsageTracker } from './test/memory-tracker';
 import { singleDotProductWasm } from 'fast-dotproduct';
 
@@ -39,7 +39,7 @@ export function initializeCentroidsRandomly(vectors: Vectors, k: number, seed?: 
  * @param maxIterations - Maximum number of iterations to run the algorithm.
  * @returns The centroids and assignments of the vectors to clusters.
  */
-export function kMeans(vectors: Vectors, k: number, metric: MetricFn, initialCentroids: Vectors = [], maxIterations = 100): Means {
+export function kMeans(vectors: Vectors, k: number, metric: DistanceMetricFn, initialCentroids: Vectors = [], maxIterations = 100): Means {
     if (vectors[0].length < MIN_DIMENSIONS) {
         throw new Error(`Vectors must have a minimum dimensionality of ${MIN_DIMENSIONS}`);
     }
@@ -110,7 +110,7 @@ export const calculateWCSS = (vectors: Vectors, centroids: Vectors, assignments:
         const clusterIdx = assignments[i];
         const vector = vectors[i];
         const centroid = centroids[clusterIdx];
-        const distance = engine.metric(normalizeVector(vector), normalizeVector(centroid));
+        const distance = engine.getDistance(normalizeVector(vector), normalizeVector(centroid));
         wcss += distance * distance;
     }
     return wcss;
@@ -276,15 +276,15 @@ describe('Vector Search Engine', () => {
         console.log("Randomly Initialized Centroids:", randomCentroids);
 
         // Perform k-means clustering with random centroids
-        const randomKMeansResult = kMeans(vectors, 2, engine.metric, randomCentroids);
+        const randomKMeansResult = kMeans(vectors, 2, engine.getDistance, randomCentroids);
         console.log("KMeans with Random Centroids:", randomKMeansResult);
 
         // Initialize centroids using k-means++
-        const kMeansPlusPlusCentroids = initializeCentroidsWithVectors(vectors, 2, engine.metric);
+        const kMeansPlusPlusCentroids = initializeCentroidsWithVectors(vectors, 2, engine.getDistance);
         console.log("KMeans++ Initialized Centroids:", kMeansPlusPlusCentroids);
 
         // Perform k-means clustering with k-means++ centroids
-        const kMeansPlusPlusResult = kMeans(vectors, 2, engine.metric, kMeansPlusPlusCentroids);
+        const kMeansPlusPlusResult = kMeans(vectors, 2, engine.getDistance, kMeansPlusPlusCentroids);
         console.log("KMeans with KMeans++ Centroids:", kMeansPlusPlusResult);
 
         const randomWCSS = calculateWCSS(vectors, randomKMeansResult.centroids, randomKMeansResult.assignments, engine);
@@ -320,11 +320,11 @@ describe('Vector Search Engine', () => {
     
         // Perform k-means clustering with random centroids
         const randomCentroids = initializeCentroidsRandomly(allVectors, 2);
-        const randomKMeansResult = kMeans(allVectors, 2, engine.metric, randomCentroids, 100);
+        const randomKMeansResult = kMeans(allVectors, 2, engine.getDistance, randomCentroids, 100);
     
         // Perform k-means clustering with k-means++ centroids
-        const kMeansPlusPlusCentroids = initializeCentroidsWithVectors(allVectors, 2, engine.metric);
-        const kMeansPlusPlusResult = kMeans(allVectors, 2, engine.metric, kMeansPlusPlusCentroids, 100);
+        const kMeansPlusPlusCentroids = initializeCentroidsWithVectors(allVectors, 2, engine.getDistance);
+        const kMeansPlusPlusResult = kMeans(allVectors, 2, engine.getDistance, kMeansPlusPlusCentroids, 100);
     
         const randomWCSS = calculateWCSS(allVectors, randomKMeansResult.centroids, randomKMeansResult.assignments, engine);
         const kMeansPlusPlusWCSS = calculateWCSS(allVectors, kMeansPlusPlusResult.centroids, kMeansPlusPlusResult.assignments, engine);
