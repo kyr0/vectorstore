@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateCentroidsKMeansPlusPlus, initializeCentroidsKMeansPlusPlus, createEngine, Vectors, dotProductMetric, getSeededRandomFn, searchWithProximity, MetricFn, Means, VectorSearchEngine } from './store_ivf_pq';
 import { MemoryUsageTracker } from './test/memory-tracker';
 
-
 /**
  * Initialize centroids randomly from the input vectors.
  * @param vectors - The list of vectors to choose from.
@@ -22,7 +21,6 @@ export function initializeCentroids(vectors: Vectors, k: number, seed?: number):
             seen.add(idx);
         }
     }
-
     return centroids;
 }
 
@@ -55,9 +53,9 @@ export function kMeans(vectors: Vectors, k: number, metric: MetricFn, initialCen
         // Assign vectors to the nearest centroid
         for (let i = 0; i < vectors.length; i++) {
             let bestIndex = 0;
-            let bestDistance = -metric([vectors[i]], [centroids[0]])[0]; // Minimize metric for distance
+            let bestDistance = -metric(vectors[i], centroids[0]); // Minimize metric for distance
             for (let j = 1; j < k; j++) {
-                const distance = -metric([vectors[i]], [centroids[j]])[0]; // Minimize metric for distance
+                const distance = -metric(vectors[i], centroids[j]); // Minimize metric for distance
                 if (distance < bestDistance) {
                     bestIndex = j;
                     bestDistance = distance;
@@ -140,9 +138,9 @@ export function miniBatchKMeans(
         // Assign vectors in the mini-batch to the nearest centroid and update sums and counts
         for (const i of batchIndices) {
             let bestIndex = 0;
-            let bestDistance = -metric([vectors[i]], [centroids[0]])[0]; // Minimize metric for distance
+            let bestDistance = -metric(vectors[i], centroids[0]); // Minimize metric for distance
             for (let j = 1; j < k; j++) {
-                const distance = -metric([vectors[i]], [centroids[j]])[0]; // Minimize metric for distance
+                const distance = -metric(vectors[i], centroids[j]); // Minimize metric for distance
                 if (distance < bestDistance) {
                     bestIndex = j;
                     bestDistance = distance;
@@ -182,7 +180,7 @@ export const calculateWCSS = (vectors: Vectors, centroids: Vectors, assignments:
         const clusterIdx = assignments[i];
         const vector = vectors[i];
         const centroid = centroids[clusterIdx];
-        const distance = engine.metric([normalizeVector(vector)], [normalizeVector(centroid)])[0];
+        const distance = engine.metric(normalizeVector(vector), normalizeVector(centroid));
         wcss += distance * distance;
     }
     return wcss;
@@ -251,7 +249,7 @@ describe('Vector Search Engine', () => {
     it('should normalize vectors correctly', () => {
         const vector: Vector = new Float32Array([1, 2, 3, 4]);
         const normalized = normalizeVector(vector);
-        const length = Math.sqrt(dotProductMetric([normalized], [normalized])[0]);
+        const length = Math.sqrt(dotProductMetric(normalized, normalized));
 
         expect(length).toBeCloseTo(1);
     });
@@ -359,8 +357,6 @@ describe('Vector Search Engine', () => {
         const cluster2Vectors: Vectors = Array.from({ length: 50000 }, () => new Float32Array(1024).map(() => random() * 10 + 100));
         console.timeEnd("Creating Vectors");
     
-        const tracker = new MemoryUsageTracker();
-        tracker.startTracking();
     
         console.time("Adding Vectors");
         // Add vectors to the engine
@@ -371,8 +367,15 @@ describe('Vector Search Engine', () => {
         // Update centroids
         updateCentroidsKMeansPlusPlus(64, engine);
     
+        const tracker = new MemoryUsageTracker();
+        tracker.startTracking();
+        
         // Query vector close to cluster 2
         const queryVector = new Float32Array(1024).map(() => random() * 10 + 100);
+    
+        console.time("Proximity (Centroid) Search");
+        const optimizedResults = searchWithProximity(queryVector, 5, engine);
+        console.timeEnd("Proximity (Centroid) Search");
     
         const { averageMemory } = tracker.stopTracking();
         console.log("benchmarked: total memory usage was:", averageMemory, "MiB");
@@ -381,11 +384,7 @@ describe('Vector Search Engine', () => {
         console.time("Exact Search");
         const exactResults = search(queryVector, 5, engine);
         console.timeEnd("Exact Search");
-    
-        console.time("Proximity (Centroid) Search");
-        const optimizedResults = searchWithProximity(queryVector, 5, engine);
-        console.timeEnd("Proximity (Centroid) Search");
-    
+
         console.log("Exact Search Results:", exactResults);
         console.log("Proximity (Centroid) Search Results:", optimizedResults);
     });

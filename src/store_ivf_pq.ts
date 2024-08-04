@@ -1,4 +1,4 @@
-import { dotProduct, initWasm } from "fast-dotproduct";
+import { singleDotProductWasm, initWasm } from "fast-dotproduct";
 await initWasm();
 
 export type Vector = Float32Array;
@@ -11,7 +11,7 @@ export interface Cluster {
 
 export type DistanceMetric = 'dot-product';
 
-export type MetricFn = (a: Vectors, b: Vectors) => Float32Array;
+export type MetricFn = (a: Vector, b: Vector) => number;
 export type RandomFn = () => number;
 
 export const getSeededRandomFn = (seed: number) => () => {
@@ -50,7 +50,7 @@ export const MIN_DIMENSIONS = 4;
 
 // --- vector distance metric functions
 
-export const dotProductMetric = dotProduct;
+export const dotProductMetric = singleDotProductWasm;
 
 // --- default engine options
 
@@ -80,9 +80,9 @@ export const updateCentroidsKMeansPlusPlus = function (k: number, engine: Vector
 
     for (const [key, vector] of engine.index.entries()) {
         let bestIndex = 0;
-        let bestDistance = -engine.metric([vector], [engine.centroids[0]])[0];
+        let bestDistance = -engine.metric(vector, engine.centroids[0]);
         for (let i = 1; i < k; i++) {
-            const distance = -engine.metric([vector], [engine.centroids[i]])[0];
+            const distance = -engine.metric(vector, engine.centroids[i]);
             if (distance < bestDistance) {
                 bestIndex = i;
                 bestDistance = distance;
@@ -149,7 +149,7 @@ export const createEngine = (options: Partial<VectorSearchEngine> = defaultEngin
  * @returns The normalized vector.
  */
 export function normalizeVector(vector: Vector): Vector {
-    const length = Math.sqrt(dotProduct([vector], [vector])[0]);
+    const length = Math.sqrt(singleDotProductWasm(vector, vector));
     if (length === 0) return vector;
     const normalizedVector = new Float32Array(vector.length);
     for (let i = 0; i < vector.length; i++) {
@@ -179,7 +179,7 @@ export function initializeCentroidsKMeansPlusPlus(vectors: Vectors, k: number, m
 
         // Update distances with the nearest centroid
         for (let i = 0; i < vectors.length; i++) {
-            const distance = Math.min(distances[i], -metric([vectors[i]], [centroids[centroids.length - 1]])[0]);
+            const distance = Math.min(distances[i], -metric(vectors[i], centroids[centroids.length - 1]));
             distances[i] = distance;
             totalDistance += distance;
         }
@@ -222,10 +222,10 @@ export function updateCentroidIncrementally(cluster: Cluster, vector: Vector): v
  */
 export function assignToCluster(key: string, vector: Vector, engine: VectorSearchEngine): void {
     let bestIndex = 0;
-    let bestDistance = -engine.metric([vector], [engine.clusters[0].centroid])[0];
+    let bestDistance = -engine.metric(vector, engine.clusters[0].centroid);
 
     for (let i = 1; i < engine.numClusters; i++) {
-        const distance = -engine.metric([vector], [engine.clusters[i].centroid])[0];
+        const distance = -engine.metric(vector, engine.clusters[i].centroid);
         if (distance < bestDistance) {
             bestIndex = i;
             bestDistance = distance;
@@ -299,7 +299,7 @@ export function search(vector: Vector, topK: number, engine: VectorSearchEngine)
 
     for (let i = 0; i < entries.length; i++) {
         const [key, indexedValue] = entries[i];
-        const similarity = engine.metric([queryVector], [indexedValue])[0];
+        const similarity = engine.metric(queryVector, indexedValue);
 
         if (results.length < topK) {
             results.push({ key, similarity });
@@ -330,7 +330,7 @@ export function searchWithProximity(vector: Vector, topK: number, engine: Vector
     // Step 1: Find the closest centroids
     const centroidSimilarities = engine.centroids.map((centroid, index) => ({
         index,
-        similarity: engine.metric([queryVector], [centroid])[0]
+        similarity: engine.metric(queryVector, centroid)
     }));
 
     // Sort centroids by similarity in descending order
@@ -344,7 +344,7 @@ export function searchWithProximity(vector: Vector, topK: number, engine: Vector
         const cluster = engine.clusters[clusterIndex];
 
         cluster.vectors.forEach((indexedValue, key) => {
-            const similarity = engine.metric([queryVector], [indexedValue])[0];
+            const similarity = engine.metric(queryVector, indexedValue);
             if (results.length < topK) {
                 results.push({ key, similarity });
                 results.sort((a, b) => b.similarity - a.similarity);
