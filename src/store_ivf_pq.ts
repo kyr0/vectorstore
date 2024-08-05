@@ -13,6 +13,7 @@ export interface Cluster {
     vectors: Map<string, Vector>;
 }
 
+// TODO: not implemented yet
 export interface HNSWVectorNode {
     vector: Vector;
     id: string;
@@ -21,6 +22,7 @@ export interface HNSWVectorNode {
     links: Map<number, Set<HNSWVectorNode>>; 
 }
 
+// TODO: not implemented yet
 export interface HNSWVectorGraph {
     // entry point for the graph
     enterPoint: HNSWVectorNode | null;  
@@ -520,7 +522,7 @@ export const searchWithProximity = (vector: Vector, topK: number, engine: Vector
 const arrayToBuffer = (arr: Float32Array): ArrayBuffer => arr.buffer.slice(0);
 const bufferToArray = (buffer: ArrayBuffer): Float32Array => new Float32Array(buffer)
 
-export const toSerialization = (engine: VectorSearchEngine): SerializedVectorSearchEngine => {
+export const serialize = (engine: VectorSearchEngine): SerializedVectorSearchEngine => {
     const serializeCluster = (cluster: Cluster) => {
         const vectors: { [key: string]: ArrayBuffer } = {};
         cluster.vectors.forEach((value, key) => {
@@ -553,7 +555,7 @@ export const toSerialization = (engine: VectorSearchEngine): SerializedVectorSea
     };
 };
 
-export const createFromSerialization = async (data: SerializedVectorSearchEngine): Promise<VectorSearchEngine> => {
+export const deserialize = async (data: SerializedVectorSearchEngine): Promise<VectorSearchEngine> => {
     const deserializeCluster = async (data: any): Promise<Cluster> => {
         const centroid = bufferToArray(data.centroid);
         const vectors = new Map<string, Vector>();
@@ -591,7 +593,7 @@ export const serializeToString = (serializedEngine: SerializedVectorSearchEngine
             : value
     );
 
-export const serializedFromString = (encodedEngine: string): SerializedVectorSearchEngine =>
+export const deserializeFromString = (encodedEngine: string): SerializedVectorSearchEngine =>
     JSON.parse(encodedEngine, (key, value) =>
         Array.isArray(value) && value.length > 0 && typeof value[0] === 'number'
             ? new Uint8Array(value).buffer

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, getSeededRandomFn, searchWithProximity, DistanceMetricFn, VectorSearchEngine, toSerialization, createFromSerialization, serializeToString, serializedFromString, checkApproachesZero } from './store_ivf_pq';
+import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, getSeededRandomFn, searchWithProximity, DistanceMetricFn, VectorSearchEngine, serialize, deserialize, serializeToString, deserializeFromString, checkApproachesZero } from './store_ivf_pq';
 import { MemoryUsageTracker } from './test/memory-tracker';
 import { singleDotProductWasm } from 'fast-dotproduct';
 import { calculateWCSS, initializeCentroidsRandomly, kMeans } from './test/math';
@@ -300,16 +300,16 @@ describe('Vector Search Engine', () => {
        expect(results[0].key).toBe('vec1');
 
        // Serialize the engine (can be stored in a database, e.g. dexie now / indexeddb)
-       const serializedEngine = toSerialization(engine);
+       const serializedEngine = serialize(engine);
 
        // Encode the serialized engine to a string (can be saved to disk/file, e.g. localStorage as a string now)
        const encodedEngine = serializeToString(serializedEngine);
 
        // Decode the encoded string back to a serialized engine (decoded from string back to structured serialization)
-       const decodedSerializedEngine = serializedFromString(encodedEngine);
+       const decodedSerializedEngine = deserializeFromString(encodedEngine);
 
        // Deserialize the engine (recreated engine object from structured serialization)
-       const deserializedEngine = await createFromSerialization(decodedSerializedEngine);
+       const deserializedEngine = await deserialize(decodedSerializedEngine);
 
        // Check that the deserialized engine matches the original engine
        expect(deserializedEngine.dimensionality).toBe(engine.dimensionality);
