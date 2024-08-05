@@ -1,120 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, getSeededRandomFn, searchWithProximity, DistanceMetricFn, VectorSearchEngine, toSerialization, createFromSerialization, serializeToString, serializedFromString } from './store_ivf_pq';
+import { addVector, removeVector, search, Vector, MIN_DIMENSIONS, normalizeVector, updateIndex, initializeCentroidsWithVectors, createEngine, Vectors, getSeededRandomFn, searchWithProximity, DistanceMetricFn, VectorSearchEngine, toSerialization, createFromSerialization, serializeToString, serializedFromString, checkApproachesZero } from './store_ivf_pq';
 import { MemoryUsageTracker } from './test/memory-tracker';
 import { singleDotProductWasm } from 'fast-dotproduct';
+import { calculateWCSS, initializeCentroidsRandomly, kMeans } from './test/math';
+import { getTokenizer, isValidTerm, removeSpecialCharsPerTokenizer, vectorizeWord, vectorizeWordlists } from './test/wordlist';
+import { readFileSync, writeFileSync } from 'fs';
+import { Embeddings, getTestEmbedding } from './test/embed';
 
 export interface Means {
     centroids: Vectors;
     assignments: Uint32Array;
 }
-
-/**
- * Initialize centroids randomly from the input vectors.
- * @param vectors - The list of vectors to choose from.
- * @param k - The number of centroids to initialize.
- * @param seed - Seed for random number generation.
- * @returns An array of centroids.
- */
-export function initializeCentroidsRandomly(vectors: Vectors, k: number, seed?: number): Vectors {
-    const centroids = [];
-    const seen = new Set<number>();
-    const random = getSeededRandomFn(seed || Math.random());
-
-    while (centroids.length < k) {
-        const idx = Math.floor(random() * vectors.length);
-        if (!seen.has(idx)) {
-            centroids.push(vectors[idx].slice());
-            seen.add(idx);
-        }
-    }
-    return centroids;
-}
-
-/**
- * k-means clustering algorithm to partition data points into k clusters.
- * @param vectors - The list of vectors to be clustered.
- * @param k - The number of clusters.
- * @param metric - The metric function to use for distance calculation.
- * @param initialCentroids - Initial centroids to use for k-means.
- * @param maxIterations - Maximum number of iterations to run the algorithm.
- * @returns The centroids and assignments of the vectors to clusters.
- */
-export function kMeans(vectors: Vectors, k: number, metric: DistanceMetricFn, initialCentroids: Vectors = [], maxIterations = 100): Means {
-    if (vectors[0].length < MIN_DIMENSIONS) {
-        throw new Error(`Vectors must have a minimum dimensionality of ${MIN_DIMENSIONS}`);
-    }
-
-    const dimension = vectors[0].length;
-    const centroids = initialCentroids.length === k ? initialCentroids : initializeCentroidsRandomly(vectors, k);
-    const assignments = new Uint32Array(vectors.length); // Use Uint32Array for better performance
-    let iterations = 0;
-    let hasChanged = true;
-
-    const sums = Array.from({ length: k }, () => new Float32Array(dimension));
-    const counts = new Uint32Array(k); // Use Uint32Array for better performance
-
-    while (iterations < maxIterations && hasChanged) {
-        hasChanged = false;
-
-        // Assign vectors to the nearest centroid
-        for (let i = 0; i < vectors.length; i++) {
-            let bestIndex = 0;
-            let bestDistance = -metric(vectors[i], centroids[0]); // Minimize metric for distance
-            for (let j = 1; j < k; j++) {
-                const distance = -metric(vectors[i], centroids[j]); // Minimize metric for distance
-                if (distance < bestDistance) {
-                    bestIndex = j;
-                    bestDistance = distance;
-                }
-            }
-            if (assignments[i] !== bestIndex) {
-                assignments[i] = bestIndex;
-                hasChanged = true;
-            }
-        }
-
-        // Clear sums and counts for new iteration
-        for (let j = 0; j < k; j++) {
-            sums[j].fill(0);
-            counts[j] = 0;
-        }
-
-        // Accumulate sums and counts
-        for (let i = 0; i < vectors.length; i++) {
-            const cluster = assignments[i];
-            for (let j = 0; j < dimension; j++) {
-                sums[cluster][j] += vectors[i][j];
-            }
-            counts[cluster]++;
-        }
-
-        // Update centroids
-        for (let j = 0; j < k; j++) {
-            if (counts[j] === 0) continue;
-            const count = counts[j];
-            for (let d = 0; d < dimension; d++) {
-                centroids[j][d] = sums[j][d] / count;
-            }
-        }
-
-        iterations++;
-    }
-
-    return { centroids, assignments };
-}
-
-// Calculate within-cluster sum of squares (WCSS) for a given clustering result
-export const calculateWCSS = (vectors: Vectors, centroids: Vectors, assignments: Uint32Array, engine: VectorSearchEngine): number => {
-    let wcss = 0;
-    for (let i = 0; i < vectors.length; i++) {
-        const clusterIdx = assignments[i];
-        const vector = vectors[i];
-        const centroid = centroids[clusterIdx];
-        const distance = engine.getDistance(normalizeVector(vector), normalizeVector(centroid));
-        wcss += distance * distance;
-    }
-    return wcss;
-};
 
 describe('Vector Search Engine', () => {
 
@@ -466,4 +362,200 @@ describe('Vector Search Engine', () => {
        const optimizedResults = searchWithProximity(queryVector, 2, deserializedEngine);
        expect(optimizedResults.length).toBe(2);
     });
+
+    it("can cluster tokenized wordlists in a dense vector space", async() => {
+
+        const tokenizer = getTokenizer();
+
+        const vectorizedWordlists = vectorizeWordlists('data/languageWordDiscriminators.json');
+        const storePerLanguage: {
+            [isoLangCode: string]: VectorSearchEngine
+        } = {}
+
+
+        const l = []
+
+        for (const iso2LangCode of Object.keys(vectorizedWordlists)) {
+            const vectorizedWordList = vectorizedWordlists[iso2LangCode]
+            const firstWordVector = vectorizedWordList[0].vector // as all vectors share the same dimensionality property, the first is enough
+
+            //const v = vectorizedWordList.map(d => d.vector)
+            //const rv = reduceDimensionalitySVD(v, 4)
+            console.log("langCode", iso2LangCode, "firstWordVector", firstWordVector)
+
+            if (typeof firstWordVector === "undefined") {
+                throw new Error("No vector in wordlist for language: " + iso2LangCode)
+            }
+                
+            // Create a vector search engine instance with the dimensionality of the language
+            const engine: VectorSearchEngine = createEngine({ 
+                dimensionality: 4, 
+                numClusters: 1 /** one centroid cluster */, 
+                normalize: true 
+            });
+            
+            for (let i = 0; i<vectorizedWordList.length; i++) {
+                l.push(vectorizedWordList[i].vector)
+                addVector(vectorizedWordList[i].word, vectorizedWordList[i].vector, engine);
+            }
+            updateIndex(engine); // optimize centroid
+            storePerLanguage[iso2LangCode] = engine;
+            const nzcount = checkApproachesZero(engine) // check against close-to-zero similarity 
+
+            console.log("nzcount", nzcount, "iso2LangCode", iso2LangCode)
+
+            writeFileSync(`data/${iso2LangCode}_test_store_index_tokenized_words.json`, JSON.stringify(l, null, 2))
+        }
+
+        const searchTexts = ["Hallo, Welt", "Hello, world", "Привет, мир! Как у тебя дела?"]
+        const resultsTopP = []
+        for (const searchText of searchTexts) {
+
+            let searchVectors: {
+                [isoLangCode: string]: Array<Float32Array>;
+            } = {}
+
+            const topP = {}
+            for (const iso2LangCode of Object.keys(storePerLanguage)) {
+
+                const engine = storePerLanguage[iso2LangCode];
+                if (typeof searchVectors[iso2LangCode] === "undefined") {
+
+                    const searchTerms = removeSpecialCharsPerTokenizer(searchText, iso2LangCode).toLowerCase().split(" ").filter(isValidTerm)
+
+                    console.log("searchTerms", searchTerms)
+
+                    searchVectors[iso2LangCode] = searchTerms.map(word => vectorizeWord(word, {
+                        tokenizer,
+                        dimensionality: 4,
+                        normalize: true,
+                        pad: false,
+                        pack: true
+                    }))
+                }
+        
+                let avgScore = 0;
+                for (let i=0; i<searchVectors[iso2LangCode].length; i++) {
+                    const result = searchWithProximity(searchVectors[iso2LangCode][i], 5, engine)
+                    const score = result[0].similarity
+                    avgScore += score;
+                    console.log("searchResult", iso2LangCode, "vector", searchVectors[iso2LangCode][i], "score", score, "result", result)
+                }
+                topP[iso2LangCode] = avgScore / searchVectors[iso2LangCode].length;
+            }
+            resultsTopP.push({
+                searchText,
+                topP,
+            })
+        }
+        console.log("storePerLanguage", resultsTopP)
+    })
+
+    it("can cluster embedded words in a dense vector space", async() => {
+
+        const isoLangs = ["de", "en"]
+        const storePerLanguage: {
+            [isoLangCode: string]: VectorSearchEngine
+        } = {}
+
+
+        const indexData = []
+
+        const embeddingsPerLanguage: {
+            [isoLangCode: string]: Embeddings
+        } = {}
+
+        for (const iso2LangCode of isoLangs) {
+            const embeddings: Embeddings = JSON.parse(readFileSync(`data/${iso2LangCode}_embed_cache_4d.json`, 'utf-8'))
+            embeddingsPerLanguage[iso2LangCode] = embeddings
+            const firstWordVector = embeddings[0].vector // as all vectors share the same dimensionality property, the first is enough
+
+            console.log("langCode", iso2LangCode, "firstWordVector", firstWordVector)
+
+            if (typeof firstWordVector === "undefined") {
+                throw new Error("No vector in wordlist for language: " + iso2LangCode)
+            }
+                
+            // Create a vector search engine instance with the dimensionality of the language
+            const engine: VectorSearchEngine = createEngine({ 
+                dimensionality: 4, 
+                numClusters: 1 /** one centroid cluster */, 
+                normalize: true 
+            });
+            
+            for (let i = 0; i<embeddings.length; i++) {
+                indexData.push(embeddings[i].vector)
+                addVector(embeddings[i].word, new Float32Array(embeddings[i].vector), engine);
+            }
+            updateIndex(engine); // optimize centroid
+            storePerLanguage[iso2LangCode] = engine;
+            const nzcount = checkApproachesZero(engine) // check against close-to-zero similarity 
+
+            console.log("nzcount", nzcount, "iso2LangCode", iso2LangCode)
+
+            writeFileSync(`data/${iso2LangCode}_test_store_index_emebddings.json`, JSON.stringify(indexData, null, 2))
+        }
+
+        const searchTexts = ["with", "mit", "für", "for"]
+        const resultsTopP = []
+        const searchTermEmbeddings: {
+            [word: string]: Float32Array
+        } = {}
+
+        for (const searchText of searchTexts) {
+
+            let searchVectors: {
+                [isoLangCode: string]: Array<Float32Array>;
+            } = {}
+
+            const topP = {}
+
+            for (const iso2LangCode of Object.keys(storePerLanguage)) {
+
+                const embeddingFound = embeddingsPerLanguage[iso2LangCode].find(e => e.word === searchText);
+
+                if (embeddingFound) {
+                    searchTermEmbeddings[searchText] = new Float32Array(embeddingFound.vector)
+                } 
+            }
+
+            if (! searchTermEmbeddings[searchText]) {
+                console.log("searchText", searchText, "not found in embeddings")
+
+                const vector = await getTestEmbedding(searchText, 4)
+
+                if (vector) {
+                    searchTermEmbeddings[searchText] = new Float32Array(vector)
+                } else {
+                    throw new Error("No embedding found for word: " + searchText)
+                }
+            }
+
+            for (const iso2LangCode of Object.keys(storePerLanguage)) {
+
+                const engine = storePerLanguage[iso2LangCode];
+                if (typeof searchVectors[iso2LangCode] === "undefined") {
+                    searchVectors[iso2LangCode] = []
+                }
+
+                if ( searchTermEmbeddings[searchText]) {
+                    searchVectors[iso2LangCode].push(searchTermEmbeddings[searchText])
+                }
+        
+                let avgScore = 0;
+                for (let i=0; i<searchVectors[iso2LangCode].length; i++) {
+                    const result = searchWithProximity(searchVectors[iso2LangCode][i], 1, engine)
+                    const score = result[0].similarity
+                    avgScore += score;
+                    console.log("searchResult embeddings", iso2LangCode, "vector", searchVectors[iso2LangCode][i], "score", score, "result", result)
+                }
+                topP[iso2LangCode] = avgScore / searchVectors[iso2LangCode].length;
+            }
+            resultsTopP.push({
+                searchText,
+                topP,
+            })
+        }
+        console.log("storePerLanguageEmbeddings", resultsTopP)
+    })
 });

@@ -13,9 +13,27 @@ export interface Cluster {
     vectors: Map<string, Vector>;
 }
 
+export interface HNSWVectorNode {
+    vector: Vector;
+    id: string;
+    level: number;
+    // links to other nodes, separated by level
+    links: Map<number, Set<HNSWVectorNode>>; 
+}
+
+export interface HNSWVectorGraph {
+    // entry point for the graph
+    enterPoint: HNSWVectorNode | null;  
+    // maximum level in the graph
+    maxLevel: number; 
+    // all nodes in the graph
+    nodes: Map<string, HNSWVectorNode>;  
+}
+
 export type DistanceMetric = 'dot-product';
 export type DistanceMetricFn = (a: Vector, b: Vector) => number;
 export type RandomFn = () => number;
+
 
 export interface VectorSearchEngine {
     // dimensionality of the vectors, automatically set on first add if not provided
@@ -28,10 +46,15 @@ export interface VectorSearchEngine {
     clusters: Array<Cluster>;
     // actual vector backing store
     index: Map<string, Vector>;
-    // centroids of the clusters (k-means)
+    // centroids of the clusters (k-means and k-means++)
+    // kmeans++ http://ilpubs.stanford.edu:8090/778/1/2006-13.pdf
     centroids: Vectors; 
     // whether to normalize vectors
     normalize: boolean; 
+    // wether to construct a HNSW graph for approximate nearest neighbor search (ANN)
+    // TODO: Not yet implemented --> PQ comes first
+    // https://arxiv.org/abs/1603.09320
+    useHNSW: boolean;
     // distance metric function (dot product by default)
     distanceMetric: DistanceMetric;
     // distance metric function reference, referenced for performance
@@ -46,13 +69,14 @@ export interface SerializedVectorSearchEngine {
     clusters: Array<{
         centroid: ArrayBuffer;
         vectors: { [key: string]: ArrayBuffer };
-    }>;
-    autoOptimizeClusters: number;
+    }>; 
+    autoOptimizeClusters: number; // 0 for false, 1 for true
     dimensionality: number;
     numClusters: number;
     index: { [key: string]: ArrayBuffer };
     centroids: Array<ArrayBuffer>;
     normalize: number; // 0 for false, 1 for true
+    useHNSW: number; // 0 for false, 1 for true
     distanceMetric: DistanceMetric;
     seed?: number;
 }
@@ -74,6 +98,10 @@ export const DEFAULT_SEED = 42;
 export const DEFAULT_NUM_CLUSTERS = 2;
 // dot product works best for high-dimensional sparse vectors (e.g. text embeddings, searching for similar documents)
 export const DEFAULT_DISTANCE_METRIC: DistanceMetric = 'dot-product';
+// when all vectors of the index approach zero, (e.g. because of padding), similarity will approach zero too and thus become meaningless
+export const CLOSE_TO_ZERO_TOLERANCE = 1e-6;
+// Lower Threshold (<15%): If your application is highly sensitive to any degradation in vector quality, you might choose a lower threshold.
+export const ZERO_VALIDATION_THRESHOLD = 0.15;
 
 // --- default engine options
 export const DEFAULT_ENGINE_OPTIONS: Partial<VectorSearchEngine> = {
@@ -85,6 +113,7 @@ export const DEFAULT_ENGINE_OPTIONS: Partial<VectorSearchEngine> = {
     seed: DEFAULT_SEED
 };
 
+
 // === Distance Metric Selection ===
 
 export const getDistanceMetricFunction =  (distanceMetric: DistanceMetric): DistanceMetricFn => {
@@ -94,6 +123,38 @@ export const getDistanceMetricFunction =  (distanceMetric: DistanceMetric): Dist
         default:
             throw new Error(`Unknown distance metric: ${distanceMetric}`);
     }
+};
+
+
+// === Safety checks ===
+export const isNearZeroVector = (vector: Vector, tolerance: number): boolean => vector.every(value => Math.abs(value) <= tolerance); 
+
+export const checkApproachesZero = (engine: VectorSearchEngine, tolerance: number = CLOSE_TO_ZERO_TOLERANCE, threshold: number = ZERO_VALIDATION_THRESHOLD): number => {
+    let nearZeroCount = 0;
+    const totalVectors = engine.index.size;
+    const sampleSize = Math.ceil(totalVectors * threshold);
+    // sample a subset of vectors for validation
+    let sampleCount = 0;
+
+    const vectors = Array.from(engine.index.values());
+
+    for (const vector of engine.index.values()) {
+        if (isNearZeroVector(vector, tolerance)) {
+            nearZeroCount++;
+        }
+        sampleCount++;
+        if (sampleCount >= sampleSize) {
+            break;
+        }
+    }
+
+    const proportionNearZero = nearZeroCount / sampleSize;
+
+    if (proportionNearZero >= threshold) {
+        console.warn(`Warning: A significant proportion (${(proportionNearZero * 100).toFixed(2)}%) of vectors are close to zero. Similarity will always approach or be zero.`);
+        return nearZeroCount;
+    }
+    return nearZeroCount;
 };
 
 // === Seeded Random Number Generation (SRNG) ===
@@ -310,6 +371,11 @@ export const removeVector = (key: string, engine: VectorSearchEngine): void => {
 
 // === Elbow Method, Optimizing Clusters and Centroids ===
 
+// as of https://arxiv.org/pdf/2212.12189 the best way to determine the number of clusters is still an open question
+// TODO: may use variance-ratio criterion (VRC) of Calinski and Harabasz
+// or, if continued, use https://ieeexplore.ieee.org/document/5453745 a more efficient algorithm
+
+
 export const calculateInertia = (engine: VectorSearchEngine): number => {
     let inertia = 0;
     for (const cluster of engine.clusters) {
@@ -321,6 +387,7 @@ export const calculateInertia = (engine: VectorSearchEngine): number => {
 }
 
 export const findBestNumClusters = (vectors: Vectors, maxClusters: number, engine: VectorSearchEngine): number => {
+
     const inertias: Array<number> = [];
     for (let k = 1; k <= maxClusters; k++) {
         const testEngine = createEngine({ numClusters: k, getDistance: engine.getDistance, seed: engine.seed, dimensionality: engine.dimensionality });
@@ -479,6 +546,7 @@ export const toSerialization = (engine: VectorSearchEngine): SerializedVectorSea
         index,
         centroids,
         normalize: engine.normalize ? 1 : 0,
+        useHNSW: engine.useHNSW ? 1 : 0,
         autoOptimizeClusters: engine.autoOptimizeClusters ? 1 : 0,
         distanceMetric: engine.distanceMetric,
         seed: engine.seed
@@ -507,6 +575,7 @@ export const createFromSerialization = async (data: SerializedVectorSearchEngine
         numClusters: data.numClusters,
         centroids: await Promise.all(data.centroids.map(bufferToArray)),
         normalize: data.normalize === 1,
+        useHNSW: data.useHNSW === 1,
         autoOptimizeClusters: data.autoOptimizeClusters === 1,
         distanceMetric: data.distanceMetric,
         getDistance: getDistanceMetricFunction(data.distanceMetric),
